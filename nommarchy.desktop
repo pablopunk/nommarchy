@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Nommarchy
+GenericName=Razer Nommo EQ
+Comment=Control the Razer Nommo V2 X EQ, presets, eco mode and sleep timeout
+Exec=sh -c 'omarchy plugin enable pablopunk.nommarchy right >/dev/null 2>&1; sleep 0.4; omarchy-shell shell toggle pablopunk.nommarchy'
+TryExec=omarchy-shell
+Icon=@ICON@
+Terminal=false
+StartupNotify=false
+Categories=AudioVideo;Audio;Settings;
+Keywords=razer;nommo;eq;equalizer;speakers;audio;sleep;
+X-Nommarchy-Managed=true
