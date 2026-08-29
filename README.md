@@ -1,4 +1,4 @@
-# <img src="icon.png" width="28" align="top"> nommarchy
+# <img src="icon.png" width="40" align="top"> nommarchy
 
 Razer Nommo V2 X control panel for [Omarchy](https://omarchy.org/) (Linux).
 
