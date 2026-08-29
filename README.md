@@ -39,9 +39,7 @@ sudo ./install.sh
 ```
 
 That installs `nommarchy` to `/usr/local/bin` and drops a udev rule so your
-user can open the device without `sudo`. The plugin's service also installs a
-launcher entry (`~/.local/share/applications/nommarchy.desktop`), so
-"Nommarchy" appears in the Omarchy menu and behaves like an app.
+user can open the device without `sudo`.
 
 > The plugin runs unsandboxed inside the Omarchy shell (like any shell
 > plugin) and shells out to `nommarchy`. It never touches the network, never
@@ -49,11 +47,11 @@ launcher entry (`~/.local/share/applications/nommarchy.desktop`), so
 
 ## Usage
 
-Launch it like an app — from the Omarchy menu (search **Nommarchy**) or the
-**equalizer icon** in the bar:
+Click the **equalizer icon** in the bar to open the control panel:
 
 - **left-click** the bar icon → open/close the panel
-- **right-click** the bar icon → quit (removes the icon; relaunch from the menu)
+- **Quit** button in the panel → remove the icon from the bar
+  (bring it back with `omarchy plugin enable pablopunk.nommarchy right`)
 
 In the panel:
 

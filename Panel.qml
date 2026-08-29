@@ -2,21 +2,20 @@ import QtQuick
 import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
-import Quickshell.Wayland
 import qs.Ui
 import qs.Commons
 
 // Nommarchy — Razer Nommo V2 X control panel.
 //
-// An app-style Omarchy panel: summon it from the Omarchy menu ("Nommarchy")
-// or with `omarchy-shell shell toggle pablopunk.nommarchy`, and it opens as a
-// centered window. State is read from the speakers over USB HID (report 0x07)
+// A tray-style bar widget: an equalizer icon in the bar opens this popup with
+// the 10-band EQ, presets, eco mode and sleep timeout. The Quit button removes
+// the icon from the bar (`omarchy plugin enable pablopunk.nommarchy right`
+// brings it back). State is read from the speakers over USB HID (report 0x07)
 // via the `nommarchy` CLI (installed by the repo's install.sh).
-Item {
+Panel {
   id: root
-
-  property var shell: null
-  property var manifest: null
+  moduleName: "pablopunk.nommarchy"
+  ipcTarget: "pablopunk.nommarchy"
 
   property bool connected: false
   property bool eco: false
@@ -26,16 +25,9 @@ Item {
   property bool bandsBeingDragged: false
   property int focusBand: -1
   property var groupDragBaseline: []
-  property bool opened: false
 
   readonly property int sleepMinutes: Math.round(root.sleepSeconds / 60)
   readonly property var presetOptions: ["flat", "game", "movie", "music"]
-
-  property color background: Color.menu.background
-  property color foreground: Color.menu.text
-  property color accent: Color.accent
-  property color scrim: Color.menu.scrim
-  property string fontFamily: Style.font.menuFamily
 
   ListModel {
     id: bandsModel
@@ -55,29 +47,6 @@ Item {
     var arr = []
     for (var i = 0; i < bandsModel.count; i++) arr.push(bandsModel.get(i).gain)
     return arr
-  }
-
-  // -- lifecycle ------------------------------------------------------------
-
-  function open(payloadJson) {
-    root.opened = true
-    root.refresh()
-    Qt.callLater(function() { if (root.opened) keyCatcher.forceActiveFocus() })
-  }
-
-  function close() {
-    root.opened = false
-  }
-
-  function dismiss() {
-    if (root.shell && typeof root.shell.hide === "function")
-      root.shell.hide((root.manifest && root.manifest.id) || "pablopunk.nommarchy")
-    else
-      close()
-  }
-
-  function toggle() {
-    root.opened ? root.dismiss() : root.open("{}")
   }
 
   // -- device I/O -----------------------------------------------------------
@@ -155,6 +124,8 @@ Item {
     onTriggered: if (!bandWrite.running && !sleepWrite.running) root.refresh()
   }
 
+  onOpenedChanged: if (root.opened) root.refresh()
+
   function setPreset(name) {
     if (!root.connected) return
     root.presetName = name
@@ -218,432 +189,441 @@ Item {
     bandWrite.restart()
   }
 
-  // -- window ---------------------------------------------------------------
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
 
-  PanelWindow {
-    id: window
-    visible: root.opened
-    anchors { top: true; bottom: true; left: true; right: true }
-    color: "transparent"
-    exclusionMode: ExclusionMode.Ignore
-    WlrLayershell.namespace: "pablopunk.nommarchy"
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+  // -- tray icon ------------------------------------------------------------
 
-    Rectangle {
-      anchors.fill: parent
-      color: root.scrim
-      MouseArea { anchors.fill: parent; onClicked: root.dismiss() }
-    }
-
-    BorderSurface {
-      id: card
-      anchors.centerIn: parent
-      width: Math.min(Style.space(680), window.width - Style.gapsOut * 4)
-      height: Math.min(Style.space(600), window.height - Style.gapsOut * 4)
-      radius: Style.cornerRadius
-      color: root.background
-      borderSpec: Border.surfaceSpec("menu", "border", Color.menu.border, Math.max(1, Style.space(2)))
-      padding: Style.spacing.panelPadding
-
-      MouseArea { anchors.fill: parent; onClicked: {} }
-
-      Item {
-        id: keyCatcher
-        anchors.fill: parent
-        focus: true
-
-        Keys.onPressed: function(event) {
-          if (event.key === Qt.Key_Escape) { root.dismiss(); event.accepted = true }
-          else if (event.key === Qt.Key_Down || event.text === "j") {
-            if (root.focusBand < 0) root.focusBand = 0
-            root.nudgeBand(root.focusBand, -1); event.accepted = true
-          }
-          else if (event.key === Qt.Key_Up || event.text === "k") {
-            if (root.focusBand < 0) root.focusBand = 0
-            root.nudgeBand(root.focusBand, 1); event.accepted = true
-          }
-          else if (event.key === Qt.Key_Right || event.text === "l") { root.moveFocus(1); event.accepted = true }
-          else if (event.key === Qt.Key_Left || event.text === "h") { root.moveFocus(-1); event.accepted = true }
-        }
-      }
-
-      Column {
-        anchors.fill: parent
-        anchors.topMargin: card.contentTopInset
-        anchors.rightMargin: card.contentRightInset
-        anchors.bottomMargin: card.contentBottomInset
-        anchors.leftMargin: card.contentLeftInset
-        spacing: Style.space(12)
-
-        // ---- hero ----
-        Item {
-          width: parent.width
-          implicitHeight: Math.max(heroLabels.implicitHeight, closeButton.implicitHeight)
-
-          Column {
-            id: heroLabels
-            anchors.left: parent.left
-            anchors.right: closeButton.left
-            anchors.rightMargin: Style.space(12)
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.space(2)
-
-            Text {
-              text: "Nommarchy"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.heading
-              font.bold: true
-              width: parent.width
-              elide: Text.ElideRight
-            }
-
-            Text {
-              text: (root.connected ? ("preset · " + root.presetName) : "not connected").toUpperCase()
-              color: Qt.darker(root.foreground, 1.6)
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              font.bold: true
-              font.letterSpacing: 1.2
-              width: parent.width
-              elide: Text.ElideRight
-            }
-          }
-
-          PanelActionButton {
-            id: closeButton
-            iconText: "󰅖"
-            tooltipText: "Close  ·  Esc"
-            foreground: root.foreground
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            onClicked: root.dismiss()
-          }
-        }
-
-        PanelSeparator { foreground: root.foreground }
-
-        // ---- EQ presets ----
-        PanelSectionHeader {
-          text: "EQ PRESET"
-          foreground: root.foreground
-          fontFamily: root.fontFamily
-        }
-
-        ButtonGroup {
-          options: root.presetOptions
-          value: root.connected ? root.presetName : ""
-          foreground: root.foreground
-          background: "transparent"
-          accent: root.accent
-          fontFamily: root.fontFamily
-          onChanged: root.setPreset(value)
-        }
-
-        PanelSeparator { foreground: root.foreground }
-
-        // ---- 10-band EQ ----
-        Item {
-          width: parent.width
-          implicitHeight: Math.max(eqHeader.implicitHeight, minButton.implicitHeight)
-
-          PanelSectionHeader {
-            id: eqHeader
-            text: "10-BAND EQUALIZER"
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-          }
-
-          Button {
-            id: minButton
-            text: "Min"
-            bordered: true
-            foreground: root.foreground
-            background: "transparent"
-            accent: root.accent
-            fontFamily: root.fontFamily
-            fontSize: Style.font.caption
-            tooltipText: "Every band at −12 dB"
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            onClicked: {
-              if (!root.connected) return
-              for (var i = 0; i < bandsModel.count; i++) bandsModel.setProperty(i, "gain", -12)
-              root.presetName = "custom"
-              bandWrite.restart()
-            }
-          }
-        }
-
-        Text {
-          text: "right-drag all · 2×click reset · 2×right-click flat"
-          color: Qt.darker(root.foreground, 1.6)
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          opacity: 0.85
-          width: parent.width
-          elide: Text.ElideRight
-        }
-
-        Row {
-          id: bandsRow
-          width: parent.width
-          spacing: Style.space(2)
-
-          Repeater {
-            model: bandsModel
-            delegate: CursorSurface {
-              id: bandRow
-              required property int index
-              required property string label
-              required property int gain
-              width: (bandsRow.width - (bandsModel.count - 1) * bandsRow.spacing) / bandsModel.count
-              implicitHeight: bandColumn.implicitHeight + Style.space(6)
-              hasCursor: root.focusBand === index
-              foreground: root.foreground
-              accent: root.accent
-
-              Column {
-                id: bandColumn
-                anchors.centerIn: parent
-                spacing: Style.space(4)
-
-                Text {
-                  text: (bandRow.gain > 0 ? "+" : "") + bandRow.gain
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                  horizontalAlignment: Text.AlignHCenter
-                  width: parent.width
-                }
-
-                Item {
-                  id: slider
-                  width: Style.space(18)
-                  height: Style.space(140)
-                  anchors.horizontalCenter: parent.horizontalCenter
-
-                  readonly property real minimum: -12
-                  readonly property real maximum: 12
-                  readonly property real range: 24
-                  readonly property real progress: Math.max(0, Math.min(1, (bandRow.gain - minimum) / range))
-                  readonly property real trackWidth: Math.max(4, Math.round(Style.spacing.controlHeight * 0.11))
-                  readonly property real knobSize: Math.max(14, Math.round(Style.spacing.controlHeight * 0.38))
-                  readonly property color trackColor: Style.selectedFillFor(root.foreground, root.accent)
-                  readonly property color fillColor: root.foreground
-
-                  property bool groupDragging: false
-                  property real groupStartY: 0
-                  property bool zeroLock: false
-
-                  function valueFromY(y) {
-                    var clamped = Math.max(0, Math.min(height, y))
-                    var progress = 1 - clamped / height
-                    var raw = minimum + progress * range
-                    return Math.max(minimum, Math.min(maximum, Math.round(raw)))
-                  }
-
-                  Rectangle {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.top: parent.top
-                    anchors.bottom: parent.bottom
-                    width: slider.trackWidth
-                    radius: width / 2
-                    color: slider.trackColor
-                  }
-
-                  Rectangle {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    anchors.bottom: parent.bottom
-                    width: slider.trackWidth
-                    height: parent.height * slider.progress
-                    radius: slider.trackWidth / 2
-                    color: slider.fillColor
-                    Behavior on height { enabled: !mouseArea.pressed; NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-                  }
-
-                  Rectangle {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    y: parent.height / 2 - height / 2
-                    width: slider.trackWidth + Style.space(4)
-                    height: Math.max(1, Style.space(1))
-                    color: Util.alpha(root.foreground, 0.28)
-                  }
-
-                  BorderSurface {
-                    id: knob
-                    width: slider.knobSize
-                    height: slider.knobSize
-                    radius: width / 2
-                    color: slider.fillColor
-                    borderSpec: Border.flat(root.background, Math.max(1, Style.space(2)))
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    y: Math.max(0, Math.min(parent.height - height, parent.height * (1 - slider.progress) - height / 2))
-                    scale: (mouseArea.containsMouse || mouseArea.pressed) ? 1.15 : 1.0
-                    Behavior on y { enabled: !mouseArea.pressed; NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-                    Behavior on scale { NumberAnimation { duration: 110 } }
-                  }
-
-                  MouseArea {
-                    id: mouseArea
-                    anchors.fill: parent
-                    enabled: root.connected
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    acceptedButtons: Qt.LeftButton | Qt.RightButton
-
-                    onPressed: function(mouse) {
-                      if (slider.zeroLock) return
-                      if (mouse.button === Qt.RightButton) {
-                        slider.groupDragging = true
-                        slider.groupStartY = mouse.y
-                        root.beginGroupDrag()
-                      } else {
-                        root.bandsBeingDragged = true
-                        root.setBand(bandRow.index, slider.valueFromY(mouse.y))
-                      }
-                    }
-                    onPositionChanged: function(mouse) {
-                      if (slider.zeroLock) return
-                      if (slider.groupDragging) {
-                        var delta = slider.valueFromY(mouse.y) - slider.valueFromY(slider.groupStartY)
-                        root.applyGroupDrag(delta)
-                      } else if (pressed) {
-                        root.setBand(bandRow.index, slider.valueFromY(mouse.y))
-                      }
-                    }
-                    onReleased: function(mouse) {
-                      if (slider.zeroLock) {
-                        slider.zeroLock = false
-                        return
-                      }
-                      if (slider.groupDragging && mouse.button === Qt.RightButton) {
-                        slider.groupDragging = false
-                        root.endGroupDrag()
-                      } else {
-                        root.bandsBeingDragged = false
-                        bandWrite.restart()
-                      }
-                    }
-                    onDoubleClicked: function(mouse) {
-                      if (mouse.button === Qt.RightButton) {
-                        slider.groupDragging = false
-                        slider.zeroLock = true
-                        root.zeroAllBands()
-                      } else if (mouse.button === Qt.LeftButton) {
-                        root.setBand(bandRow.index, 0)
-                      }
-                    }
-                    onWheel: function(wheel) {
-                      var delta = wheel.angleDelta.y > 0 ? 1 : -1
-                      root.nudgeBand(bandRow.index, delta)
-                    }
-                  }
-                }
-
-                Text {
-                  text: bandRow.label
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                  horizontalAlignment: Text.AlignHCenter
-                  width: parent.width
-                }
-              }
-
-              HoverHandler {
-                onHoveredChanged: if (hovered) root.focusBand = bandRow.index
-              }
-            }
-          }
-        }
-
-        PanelSeparator { foreground: root.foreground }
-
-        // ---- power ----
-        PanelSectionHeader {
-          text: "POWER"
-          foreground: root.foreground
-          fontFamily: root.fontFamily
-        }
-
-        Toggle {
-          width: parent.width
-          label: "Eco mode"
-          description: "Put the speakers to sleep when idle"
-          checked: root.eco
-          foreground: root.foreground
-          accent: root.accent
-          onClicked: root.setEco(!root.eco)
-        }
-
-        Item {
-          width: parent.width
-          implicitHeight: sleepColumn.implicitHeight + Style.space(6)
-
-          Column {
-            id: sleepColumn
-            width: parent.width
-            spacing: Style.space(4)
-
-            Row {
-              width: parent.width
-
-              PanelSectionHeader {
-                id: sleepHeader
-                text: "SLEEP TIMEOUT"
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                anchors.verticalCenter: parent.verticalCenter
-              }
-
-              Item {
-                width: parent.width - sleepHeader.implicitWidth - sleepValue.implicitWidth
-                height: 1
-              }
-
-              Text {
-                id: sleepValue
-                text: root.sleepMinutes > 0 ? root.sleepMinutes + " min" : "Never"
-                color: Qt.darker(root.foreground, 1.4)
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                anchors.verticalCenter: parent.verticalCenter
-              }
-            }
-
-            PanelSlider {
-              id: sleepSlider
-              bar: null
-              width: parent.width
-              minimum: 0
-              maximum: 120
-              step: 5
-              integer: true
-              tickCount: 25
-              value: root.sleepMinutes
-              enabled: root.connected
-              onMoved: function(v) {
-                root.sleepSeconds = Math.round(v) * 60
-                sleepWrite.restart()
-              }
-            }
-          }
-        }
-      }
+  BarIconButton {
+    id: button
+    anchors.fill: parent
+    bar: root.bar
+    text: "󰺢"
+    opacity: root.connected ? 1.0 : 0.45
+    onPressed: function(b) {
+      if (b === Qt.RightButton) root.refresh()
+      else root.toggle()
     }
   }
 
-  IpcHandler {
-    target: "pablopunk.nommarchy"
-    function open(): void { root.open("{}") }
-    function close(): void { root.dismiss() }
-    function toggle(): void { root.toggle() }
+  // -- popup panel ----------------------------------------------------------
+
+  KeyboardPanel {
+    id: panel
+    anchorItem: button
+    owner: root
+    bar: root.bar
+    open: root.opened
+    focusTarget: keyCatcher
+    contentWidth: panel.fittedContentWidth(Style.space(420))
+    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(600))
+
+    PanelKeyCatcher {
+      id: keyCatcher
+      anchors.fill: parent
+      onCloseRequested: root.close()
+      onTabRequested: function(direction) { root.switchPanel(direction) }
+      onMoveRequested: function(dx, dy) {
+        if (dy !== 0) {
+          if (root.focusBand < 0) root.focusBand = 0
+          root.nudgeBand(root.focusBand, dy < 0 ? 1 : -1)
+        } else if (dx !== 0) {
+          root.moveFocus(dx)
+        }
+      }
+
+      ScrollView {
+        id: scrollArea
+        anchors.fill: parent
+        clip: true
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+        ScrollBar.vertical.policy: panelColumn.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+        Binding {
+          target: scrollArea.contentItem
+          property: "interactive"
+          value: panelColumn.implicitHeight > scrollArea.height
+        }
+
+        Column {
+          id: panelColumn
+          width: scrollArea.availableWidth
+          spacing: Style.space(14)
+
+          // ---- hero ----
+          Item {
+            width: parent.width
+            implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight, quitButton.implicitHeight)
+
+            Text {
+              id: heroIcon
+              text: "󰺢"
+              color: root.bar.foreground
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.display
+              opacity: root.connected ? 1.0 : 0.45
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Column {
+              id: heroLabels
+              anchors.left: heroIcon.right
+              anchors.leftMargin: Style.space(14)
+              anchors.right: quitButton.left
+              anchors.rightMargin: Style.space(12)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(2)
+
+              Text {
+                text: "Nommarchy"
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.title
+                font.bold: true
+                elide: Text.ElideRight
+                width: parent.width
+              }
+
+              Text {
+                text: (root.connected ? ("preset · " + root.presetName) : "not connected").toUpperCase()
+                color: Qt.darker(root.bar.foreground, 1.4)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                font.letterSpacing: 1.2
+                elide: Text.ElideRight
+                width: parent.width
+              }
+            }
+
+            Button {
+              id: quitButton
+              text: "Quit"
+              bordered: true
+              foreground: root.bar.foreground
+              background: "transparent"
+              accent: Color.accent
+              fontFamily: root.bar.fontFamily
+              fontSize: Style.font.caption
+              tooltipText: "Remove nommarchy from the bar"
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              onClicked: Quickshell.execDetached(["omarchy", "plugin", "disable", "pablopunk.nommarchy"])
+            }
+          }
+
+          PanelSeparator { foreground: root.bar.foreground }
+
+          // ---- EQ presets ----
+          PanelSectionHeader {
+            text: "EQ PRESET"
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+          }
+
+          ButtonGroup {
+            options: root.presetOptions
+            value: root.connected ? root.presetName : ""
+            foreground: root.bar.foreground
+            background: "transparent"
+            fontFamily: root.bar.fontFamily
+            onChanged: root.setPreset(value)
+          }
+
+          PanelSeparator { foreground: root.bar.foreground }
+
+          // ---- 10-band EQ ----
+          Item {
+            width: parent.width
+            implicitHeight: Math.max(eqHeader.implicitHeight, minButton.implicitHeight)
+
+            PanelSectionHeader {
+              id: eqHeader
+              text: "10-BAND EQUALIZER"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+            }
+
+            Button {
+              id: minButton
+              text: "Min"
+              bordered: true
+              foreground: root.bar.foreground
+              background: "transparent"
+              fontFamily: root.bar.fontFamily
+              fontSize: Style.font.caption
+              tooltipText: "Every band at −12 dB"
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              onClicked: {
+                if (!root.connected) return
+                for (var i = 0; i < bandsModel.count; i++) bandsModel.setProperty(i, "gain", -12)
+                root.presetName = "custom"
+                bandWrite.restart()
+              }
+            }
+          }
+
+          Text {
+            text: "right-drag all · 2×click reset · 2×right-click flat"
+            color: Qt.darker(root.bar.foreground, 1.5)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+            opacity: 0.85
+            width: parent.width
+            elide: Text.ElideRight
+          }
+
+          Row {
+            id: bandsRow
+            width: parent.width
+            spacing: Style.space(2)
+
+            Repeater {
+              model: bandsModel
+              delegate: CursorSurface {
+                id: bandRow
+                required property int index
+                required property string label
+                required property int gain
+                width: (bandsRow.width - (bandsModel.count - 1) * bandsRow.spacing) / bandsModel.count
+                implicitHeight: bandColumn.implicitHeight + Style.space(6)
+                hasCursor: root.focusBand === index
+                foreground: root.bar.foreground
+
+                Column {
+                  id: bandColumn
+                  anchors.centerIn: parent
+                  spacing: Style.space(4)
+
+                  Text {
+                    text: (bandRow.gain > 0 ? "+" : "") + bandRow.gain
+                    color: root.bar.foreground
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    width: parent.width
+                  }
+
+                  Item {
+                    id: slider
+                    width: Style.space(18)
+                    height: Style.space(130)
+                    anchors.horizontalCenter: parent.horizontalCenter
+
+                    readonly property real minimum: -12
+                    readonly property real maximum: 12
+                    readonly property real range: 24
+                    readonly property real progress: Math.max(0, Math.min(1, (bandRow.gain - minimum) / range))
+                    readonly property real trackWidth: Math.max(4, Math.round(Style.spacing.controlHeight * 0.11))
+                    readonly property real knobSize: Math.max(14, Math.round(Style.spacing.controlHeight * 0.38))
+                    readonly property color trackColor: root.bar ? Style.selectedFillFor(root.bar.foreground, Color.accent) : "#333"
+                    readonly property color fillColor: root.bar ? root.bar.foreground : Color.foreground
+
+                    property bool groupDragging: false
+                    property real groupStartY: 0
+                    property bool zeroLock: false
+
+                    function valueFromY(y) {
+                      var clamped = Math.max(0, Math.min(height, y))
+                      var progress = 1 - clamped / height
+                      var raw = minimum + progress * range
+                      return Math.max(minimum, Math.min(maximum, Math.round(raw)))
+                    }
+
+                    Rectangle {
+                      anchors.horizontalCenter: parent.horizontalCenter
+                      anchors.top: parent.top
+                      anchors.bottom: parent.bottom
+                      width: slider.trackWidth
+                      radius: width / 2
+                      color: slider.trackColor
+                    }
+
+                    Rectangle {
+                      anchors.horizontalCenter: parent.horizontalCenter
+                      anchors.bottom: parent.bottom
+                      width: slider.trackWidth
+                      height: parent.height * slider.progress
+                      radius: slider.trackWidth / 2
+                      color: slider.fillColor
+                      Behavior on height { enabled: !mouseArea.pressed; NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+                    }
+
+                    Rectangle {
+                      anchors.horizontalCenter: parent.horizontalCenter
+                      y: parent.height / 2 - height / 2
+                      width: slider.trackWidth + Style.space(4)
+                      height: Math.max(1, Style.space(1))
+                      color: Util.alpha(root.bar.foreground, 0.28)
+                    }
+
+                    BorderSurface {
+                      id: knob
+                      width: slider.knobSize
+                      height: slider.knobSize
+                      radius: width / 2
+                      color: slider.fillColor
+                      borderSpec: Border.flat(root.bar ? root.bar.background : "#101315", Math.max(1, Style.space(2)))
+                      anchors.horizontalCenter: parent.horizontalCenter
+                      y: Math.max(0, Math.min(parent.height - height, parent.height * (1 - slider.progress) - height / 2))
+                      scale: (mouseArea.containsMouse || mouseArea.pressed) ? 1.15 : 1.0
+                      Behavior on y { enabled: !mouseArea.pressed; NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+                      Behavior on scale { NumberAnimation { duration: 110 } }
+                    }
+
+                    MouseArea {
+                      id: mouseArea
+                      anchors.fill: parent
+                      enabled: root.connected
+                      hoverEnabled: true
+                      cursorShape: Qt.PointingHandCursor
+                      acceptedButtons: Qt.LeftButton | Qt.RightButton
+
+                      onPressed: function(mouse) {
+                        if (slider.zeroLock) return
+                        if (mouse.button === Qt.RightButton) {
+                          slider.groupDragging = true
+                          slider.groupStartY = mouse.y
+                          root.beginGroupDrag()
+                        } else {
+                          root.bandsBeingDragged = true
+                          root.setBand(bandRow.index, slider.valueFromY(mouse.y))
+                        }
+                      }
+                      onPositionChanged: function(mouse) {
+                        if (slider.zeroLock) return
+                        if (slider.groupDragging) {
+                          var delta = slider.valueFromY(mouse.y) - slider.valueFromY(slider.groupStartY)
+                          root.applyGroupDrag(delta)
+                        } else if (pressed) {
+                          root.setBand(bandRow.index, slider.valueFromY(mouse.y))
+                        }
+                      }
+                      onReleased: function(mouse) {
+                        if (slider.zeroLock) {
+                          slider.zeroLock = false
+                          return
+                        }
+                        if (slider.groupDragging && mouse.button === Qt.RightButton) {
+                          slider.groupDragging = false
+                          root.endGroupDrag()
+                        } else {
+                          root.bandsBeingDragged = false
+                          bandWrite.restart()
+                        }
+                      }
+                      onDoubleClicked: function(mouse) {
+                        if (mouse.button === Qt.RightButton) {
+                          slider.groupDragging = false
+                          slider.zeroLock = true
+                          root.zeroAllBands()
+                        } else if (mouse.button === Qt.LeftButton) {
+                          root.setBand(bandRow.index, 0)
+                        }
+                      }
+                      onWheel: function(wheel) {
+                        var delta = wheel.angleDelta.y > 0 ? 1 : -1
+                        root.nudgeBand(bandRow.index, delta)
+                      }
+                    }
+                  }
+
+                  Text {
+                    text: bandRow.label
+                    color: root.bar.foreground
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    width: parent.width
+                  }
+                }
+
+                HoverHandler {
+                  onHoveredChanged: if (hovered) root.focusBand = bandRow.index
+                }
+              }
+            }
+          }
+
+          PanelSeparator { foreground: root.bar.foreground }
+
+          // ---- power ----
+          PanelSectionHeader {
+            text: "POWER"
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+          }
+
+          Toggle {
+            width: parent.width
+            label: "Eco mode"
+            description: "Put the speakers to sleep when idle"
+            checked: root.eco
+            foreground: root.bar.foreground
+            onClicked: root.setEco(!root.eco)
+          }
+
+          Item {
+            width: parent.width
+            implicitHeight: sleepColumn.implicitHeight + Style.space(6)
+
+            Column {
+              id: sleepColumn
+              width: parent.width
+              spacing: Style.space(4)
+
+              Row {
+                width: parent.width
+
+                PanelSectionHeader {
+                  id: sleepHeader
+                  text: "SLEEP TIMEOUT"
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Item {
+                  width: parent.width - sleepHeader.implicitWidth - sleepValue.implicitWidth
+                  height: 1
+                }
+
+                Text {
+                  id: sleepValue
+                  text: root.sleepMinutes > 0 ? root.sleepMinutes + " min" : "Never"
+                  color: Qt.darker(root.bar.foreground, 1.4)
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+              }
+
+              PanelSlider {
+                id: sleepSlider
+                bar: root.bar
+                width: parent.width
+                minimum: 0
+                maximum: 120
+                step: 5
+                integer: true
+                tickCount: 25
+                value: root.sleepMinutes
+                enabled: root.connected
+                onMoved: function(v) {
+                  root.sleepSeconds = Math.round(v) * 60
+                  sleepWrite.restart()
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }
