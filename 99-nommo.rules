@@ -1,0 +1,3 @@
+# Razer Nommo V2 X (1532:055E) — allow the local user to control the
+# speakers' vendor HID interface (feature report 0x07) without root.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1532", ATTRS{idProduct}=="055e", MODE="0660", GROUP="input", TAG+="uaccess"

@@ -1,0 +1,395 @@
+#!/usr/bin/env python3
+"""nommarchy — Razer Nommo V2 X control panel for Omarchy (Linux).
+
+A native Linux/Omarchy port of the macOS `nommac` menu-bar app
+(https://github.com/pablopunk/nommac). It talks directly to the speakers'
+vendor HID feature report (report ID 0x07, 90 bytes) over the hidraw device
+node, using the same Razer protocol that Razer Synapse uses on Windows. No
+Synapse, no drivers, no bloat — just the standard `fcntl.ioctl` interface
+every Linux kernel already ships.
+
+Protocol source: reverse engineered in https://github.com/openrazer/openrazer/issues/2758
+and documented in the upstream `Sources/Nommac/RazerReport.swift`.
+
+Usage:
+  nommarchy status                  show all settings
+  nommarchy eco [on|off]            get/set power saving (auto sleep)
+  nommarchy sleep [<minutes>|off]   get/set idle sleep timeout
+  nommarchy eq [show|flat|min|<g1..g10>]
+                                    get/set 10-band EQ gains in dB (-12..12)
+  nommarchy preset [flat|game|movie|music|0-3]
+                                    get/set EQ preset (resets bands to flat)
+  nommarchy json                    machine-readable state (for the shell plugin)
+
+Permissions: the hidraw node is root-owned by default. The bundled udev rule
+(99-nommo.rules) grants your user access; until it is installed, run via
+sudo/pkexec.
+"""
+
+import fcntl
+import glob
+import os
+import sys
+import time
+
+VENDOR_ID = 0x1532
+PRODUCT_ID = 0x055E
+
+REPORT_ID = 0x07
+TRANSACTION_ID = 0x3F
+REPORT_LEN = 91          # report ID byte + 90-byte Razer report
+FLAT_BYTE = 0x0C         # 0 dB, one unit per dB
+BAND_COUNT = 10
+BAND_LABELS = ["31", "63", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
+PRESET_NAMES = {0: "flat", 1: "game", 2: "movie", 3: "music"}
+PRESET_CUSTOM = 0x10
+
+# --- ioctl number encoding (asm-generic/ioctl.h) ---------------------------
+_IOC_NRBITS = 8
+_IOC_TYPEBITS = 8
+_IOC_SIZEBITS = 14
+_IOC_DIRSHIFT = 30
+_IOC_TYPESHIFT = 8
+_IOC_SIZESHIFT = 16
+_IOC_NRSHIFT = 0
+_IOC_WRITE = 1
+_IOC_READ = 2
+
+
+def _ioc(direction, ch, nr, size):
+    return (direction << _IOC_DIRSHIFT) | (size << _IOC_SIZESHIFT) | (ord(ch) << _IOC_TYPESHIFT) | (nr << _IOC_NRSHIFT)
+
+
+HIDIOCSFEATURE = _ioc(_IOC_WRITE | _IOC_READ, "H", 0x06, REPORT_LEN)
+HIDIOCGFEATURE = _ioc(_IOC_WRITE | _IOC_READ, "H", 0x07, REPORT_LEN)
+
+
+# --- protocol codec (mirrors RazerReport.swift) ----------------------------
+def checksum(buf: bytearray) -> int:
+    """XOR of buf[3..<89]."""
+    x = 0
+    for b in buf[3:89]:
+        x ^= b
+    return x
+
+
+def build_request(command_class: int, command_id: int, arguments: bytes) -> bytearray:
+    if len(arguments) > 80:
+        raise ValueError("too many arguments")
+    buf = bytearray(REPORT_LEN)
+    buf[0] = REPORT_ID
+    buf[1] = 0x00  # new command
+    buf[2] = TRANSACTION_ID
+    buf[6] = len(arguments)
+    buf[7] = command_class
+    buf[8] = command_id
+    buf[9:9 + len(arguments)] = arguments
+    buf[89] = checksum(buf)
+    return buf
+
+
+class NommoError(Exception):
+    pass
+
+
+class NommoDevice:
+    """A handle to the Nommo V2 X, with the same command set as the macOS app."""
+
+    def __init__(self, path: str):
+        try:
+            self.fd = os.open(path, os.O_RDWR)
+        except PermissionError:
+            raise NommoError(
+                f"permission denied opening {path}. "
+                "Run via sudo/pkexec, or install the udev rule (see README.md)."
+            )
+        except OSError as e:
+            raise NommoError(f"cannot open {path}: {e.strerror}")
+        self.path = path
+
+    def close(self):
+        try:
+            os.close(self.fd)
+        except OSError:
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    # -- low-level transaction -------------------------------------------------
+    def transact(self, command_class: int, command_id: int, arguments: bytes) -> bytes:
+        request = build_request(command_class, command_id, arguments)
+        try:
+            fcntl.ioctl(self.fd, HIDIOCSFEATURE, bytes(request))
+        except OSError as e:
+            raise NommoError(f"failed to send report: {e.strerror}")
+
+        # The device stages its response in the feature report; poll it.
+        payload = None
+        for _ in range(100):  # up to ~1s
+            time.sleep(0.01)
+            buf = bytearray(REPORT_LEN)
+            buf[0] = REPORT_ID
+            try:
+                # fcntl.ioctl mutates `buf` in place and returns the byte
+                # count as an int, so read `buf` (not the return value).
+                fcntl.ioctl(self.fd, HIDIOCGFEATURE, buf)
+            except OSError as e:
+                raise NommoError(f"failed to read report: {e.strerror}")
+            resp = buf
+            if resp[0] != REPORT_ID:
+                continue
+            status = resp[1]
+            if status in (0x00, 0x01):  # new (echo) / busy — keep polling
+                continue
+            if status == 0x02:  # success
+                size = min(resp[6], 80)
+                payload = bytes(resp[9:9 + size])
+                break
+            # 0x03 failure, 0x04 timeout, 0x05 not-supported
+            raise NommoError(f"command rejected (status=0x{status:02X})")
+        if payload is None:
+            raise NommoError("device did not answer (timed out)")
+        return payload
+
+    # -- commands --------------------------------------------------------------
+    def read_state(self):
+        return {
+            "eco": self.read_eco(),
+            "sleep_seconds": self.read_sleep_timeout(),
+            "preset": self.read_preset(),
+            "bands": self.read_bands(),
+        }
+
+    def read_eco(self) -> bool:
+        return self.transact(0x07, 0x88, b"\x00\x00")[1] == 1
+
+    def set_eco(self, enabled: bool):
+        self.transact(0x07, 0x08, bytes([0, 1 if enabled else 0]))
+
+    def read_sleep_timeout(self) -> int:
+        p = self.transact(0x07, 0x83, b"\x00\x00")
+        return (p[0] << 8) | p[1]
+
+    def set_sleep_timeout(self, seconds: int):
+        # Firmware quirk: writing the timeout forces eco back on.
+        eco = self.read_eco()
+        self.transact(0x07, 0x03, bytes([(seconds >> 8) & 0xFF, seconds & 0xFF]))
+        self.set_eco(eco)
+
+    def read_preset(self) -> int:
+        return self.transact(0x08, 0x82, b"\x00\x00")[1]
+
+    def set_preset(self, preset: int):
+        self.transact(0x08, 0x02, bytes([0, preset]))
+
+    def read_bands(self):
+        p = self.transact(0x08, 0x84, b"\x00" * (BAND_COUNT + 1))
+        return [b - FLAT_BYTE for b in p[1:1 + BAND_COUNT]]
+
+    def set_bands(self, gains):
+        if len(gains) != BAND_COUNT:
+            raise NommoError(f"expected {BAND_COUNT} gains, got {len(gains)}")
+        bytes_ = bytes([0] + [g + FLAT_BYTE for g in gains])
+        self.transact(0x08, 0x04, bytes_)
+
+
+# --- device discovery ------------------------------------------------------
+def find_device() -> str | None:
+    """Return the hidraw node for the Nommo V2 X, or None if not connected."""
+    vid = f"0000{VENDOR_ID:04X}"
+    pid = f"0000{PRODUCT_ID:04X}"
+    needle = f"{vid}:{pid}"
+    for dev in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
+        uevent = os.path.join(dev, "device", "uevent")
+        try:
+            with open(uevent) as f:
+                if needle in f.read():
+                    return f"/dev/{os.path.basename(dev)}"
+        except OSError:
+            continue
+    return None
+
+
+# --- CLI --------------------------------------------------------------------
+USAGE = """\
+usage: nommarchy <command> [args]
+
+commands:
+  status                     show all settings
+  eco [on|off]               get/set power saving (auto sleep)
+  sleep [<minutes>|off]      get/set idle sleep timeout
+  eq [show|flat|min|<g1..g10>]
+                             get/set 10-band EQ gains in dB (-12..12)
+                             min puts every band at the -12 dB floor
+  preset [flat|game|movie|music|0-3]
+                             get/set EQ preset (resets bands to flat)
+"""
+
+
+def _format_gain(g: int) -> str:
+    return f"+{g}" if g > 0 else str(g)
+
+
+def _pad(s: str) -> str:
+    return " " * max(0, 4 - len(s)) + s
+
+
+def _preset_name(raw: int) -> str:
+    if raw == PRESET_CUSTOM:
+        return "custom"
+    return PRESET_NAMES.get(raw, str(raw))
+
+
+def _parse_onoff(value: str) -> bool:
+    if value in ("on", "1", "true"):
+        return True
+    if value in ("off", "0", "false"):
+        return False
+    raise NommoError(f"expected on/off, got '{value}'")
+
+
+def _parse_gains(args):
+    values = list(args)
+    if len(values) == 1:
+        values = [values[0]] * BAND_COUNT
+    if len(values) != BAND_COUNT:
+        raise NommoError(f"expected {BAND_COUNT} band gains, got {len(values)}")
+    gains = []
+    for v in values:
+        try:
+            g = int(v)
+        except ValueError:
+            raise NommoError(f"gain '{v}' out of range -12..12 dB")
+        if not -12 <= g <= 12:
+            raise NommoError(f"gain '{v}' out of range -12..12 dB")
+        gains.append(g)
+    return gains
+
+
+def _cmd_status(d, args):
+    s = d.read_state()
+    timeout = f"{s['sleep_seconds'] // 60} min" if s["sleep_seconds"] > 0 else "disabled"
+    print(f"eco (power saving): {'on' if s['eco'] else 'off'}")
+    print(f"sleep timeout:      {timeout}")
+    print(f"eq preset:          {_preset_name(s['preset'])} ({s['preset']})")
+    print("eq bands (dB):")
+    print("  " + "  ".join(_pad(l) for l in BAND_LABELS))
+    print("  " + "  ".join(_pad(_format_gain(g)) for g in s["bands"]))
+
+
+def _cmd_eco(d, args):
+    if not args:
+        print("on" if d.read_eco() else "off")
+        return
+    enabled = _parse_onoff(args[0])
+    d.set_eco(enabled)
+    print(f"eco {'on' if enabled else 'off'}")
+
+
+def _cmd_sleep(d, args):
+    if not args:
+        secs = d.read_sleep_timeout()
+        print(f"{secs // 60} min" if secs > 0 else "disabled")
+        return
+    arg = args[0]
+    if arg in ("off", "never", "0"):
+        minutes = 0
+    else:
+        try:
+            minutes = int(arg)
+        except ValueError:
+            raise NommoError("minutes must be 0-1092 or off")
+        if not 0 <= minutes <= 1092:
+            raise NommoError("minutes must be 0-1092 or off")
+    d.set_sleep_timeout(minutes * 60)
+    print(f"sleep timeout set to {minutes} min" if minutes > 0 else "sleep disabled")
+
+
+def _cmd_eq(d, args):
+    if not args or args == ["show"]:
+        print(" ".join(_format_gain(g) for g in d.read_bands()))
+        return
+    if args == ["flat"]:
+        gains = [0] * BAND_COUNT
+    elif args == ["min"]:
+        gains = [-12] * BAND_COUNT
+    else:
+        gains = _parse_gains(args)
+    d.set_bands(gains)
+    print("eq set: " + " ".join(_format_gain(g) for g in gains))
+
+
+def _cmd_preset(d, args):
+    if not args:
+        raw = d.read_preset()
+        print(f"{_preset_name(raw)} ({raw})")
+        return
+    arg = args[0]
+    by_name = {v: k for k, v in PRESET_NAMES.items()}
+    if arg in by_name:
+        preset = by_name[arg]
+    elif arg.isdigit() and int(arg) in PRESET_NAMES:
+        preset = int(arg)
+    else:
+        raise NommoError("preset must be flat/game/movie/music or 0-3")
+    d.set_preset(preset)
+    print(f"preset set to {PRESET_NAMES[preset]} ({preset})")
+
+
+def _cmd_json(d, args):
+    """Emit a single JSON object for the Omarchy shell plugin to consume."""
+    import json
+    s = d.read_state()
+    print(json.dumps({
+        "connected": True,
+        "eco": s["eco"],
+        "sleepSeconds": s["sleep_seconds"],
+        "preset": s["preset"],
+        "presetName": _preset_name(s["preset"]),
+        "bands": s["bands"],
+    }))
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(USAGE)
+        return 1 if not argv else 0
+
+    cmd = argv[0]
+    rest = argv[1:]
+    handlers = {
+        "status": _cmd_status,
+        "eco": _cmd_eco,
+        "sleep": _cmd_sleep,
+        "eq": _cmd_eq,
+        "preset": _cmd_preset,
+        "json": _cmd_json,
+    }
+    if cmd not in handlers:
+        print(f"error: unknown command '{cmd}'\n\n{USAGE}", file=sys.stderr)
+        return 1
+
+    path = find_device()
+    if path is None:
+        if cmd == "json":
+            import json
+            print(json.dumps({"connected": False}))
+            return 0
+        print("error: Razer Nommo V2 X not connected", file=sys.stderr)
+        return 1
+
+    try:
+        with NommoDevice(path) as d:
+            handlers[cmd](d, rest)
+        return 0
+    except NommoError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

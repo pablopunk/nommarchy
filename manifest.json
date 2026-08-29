@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "pablopunk.nommarchy",
+  "name": "Nommarchy",
+  "version": "1.0.0",
+  "author": "Pablo Varela",
+  "description": "Razer Nommo V2 X control — 10-band EQ, presets, eco mode, sleep timeout",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Nommo V2 X",
+    "description": "Razer Nommo V2 X EQ, presets, eco mode and sleep timeout",
+    "category": "Audio",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
