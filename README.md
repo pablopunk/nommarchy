@@ -47,11 +47,12 @@ user can open the device without `sudo`.
 
 ## Usage
 
-Click the **equalizer icon** in the bar to open the control panel:
+**Launch it like an app** — from the Omarchy menu (search **Nommarchy**) or
+click the **equalizer icon** in the bar:
 
 - **left-click** the bar icon → open/close the panel
 - **Quit** button in the panel → remove the icon from the bar
-  (bring it back with `omarchy plugin enable pablopunk.nommarchy right`)
+- **launch from the menu** → re-add the icon if it was quit, then open the panel
 
 In the panel:
 
