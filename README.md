@@ -39,7 +39,9 @@ sudo ./install.sh
 ```
 
 That installs `nommarchy` to `/usr/local/bin` and drops a udev rule so your
-user can open the device without `sudo`.
+user can open the device without `sudo`. The plugin's service also installs a
+launcher entry (`~/.local/share/applications/nommarchy.desktop`), so
+"Nommarchy" appears in the Omarchy menu and behaves like an app.
 
 > The plugin runs unsandboxed inside the Omarchy shell (like any shell
 > plugin) and shells out to `nommarchy`. It never touches the network, never
@@ -47,14 +49,26 @@ user can open the device without `sudo`.
 
 ## Usage
 
-Click the **equalizer icon** in the bar to open the control panel:
+Launch it like an app — from the Omarchy menu (search **Nommarchy**) or the
+**equalizer icon** in the bar:
+
+- **left-click** the bar icon → open/close the panel
+- **right-click** the bar icon → quit (removes the icon; relaunch from the menu)
+
+In the panel:
 
 - **drag** a vertical bar → edit that band
 - **right-drag** → shift the whole 10-band curve at once
 - **double-click** a bar → reset that band to 0 dB
 - **double right-click** → flatten all ten bands
 - **scroll** a bar → nudge it ±1 dB
-- **↑/↓** nudge the focused band, **←/→** move focus, **Esc** closes, **Tab** switches panels
+- **↑/↓** nudge the focused band, **←/→** move focus, **Esc** closes
+
+You can also toggle it from a terminal or a keybind:
+
+```bash
+omarchy-shell shell toggle pablopunk.nommarchy
+```
 
 The `nommarchy` binary doubles as a command-line tool:
 

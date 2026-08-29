@@ -4,14 +4,16 @@
   "name": "Nommarchy",
   "version": "1.0.0",
   "author": "Pablo Varela",
-  "description": "Razer Nommo V2 X control — 10-band EQ, presets, eco mode, sleep timeout",
-  "kinds": ["bar-widget"],
+  "description": "Razer Nommo V2 X control — 10-band EQ, presets, eco mode, sleep timeout. Launch it like an app from the Omarchy menu, or from the bar icon (right-click the icon to quit).",
+  "kinds": ["bar-widget", "panel", "service"],
   "entryPoints": {
-    "barWidget": "Panel.qml"
+    "barWidget": "BarWidget.qml",
+    "panel": "Panel.qml",
+    "service": "Service.qml"
   },
   "barWidget": {
-    "displayName": "Nommo V2 X",
-    "description": "Razer Nommo V2 X EQ, presets, eco mode and sleep timeout",
+    "displayName": "Nommarchy",
+    "description": "Launcher for the Nommo V2 X EQ panel (right-click to quit)",
     "category": "Audio",
     "allowMultiple": false,
     "defaultSection": "right"
