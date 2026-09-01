@@ -28,6 +28,9 @@ Panel {
 
   readonly property int sleepMinutes: Math.round(root.sleepSeconds / 60)
   readonly property var presetOptions: ["flat", "game", "movie", "music"]
+  // The installer (install.sh) puts the CLI at ~/.local/bin/nommarchy; invoke
+  // it by absolute path so the panel does not depend on the shell's PATH.
+  readonly property string backend: Quickshell.env("HOME") + "/.local/bin/nommarchy"
 
   ListModel {
     id: bandsModel
@@ -53,7 +56,7 @@ Panel {
 
   Process {
     id: statusProc
-    command: ["nommarchy", "json"]
+    command: [root.backend, "json"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.parseStatus(text)
@@ -90,7 +93,7 @@ Panel {
 
   function exec(args) {
     if (!root.connected) return
-    Quickshell.execDetached(["nommarchy"].concat(args))
+    Quickshell.execDetached([root.backend].concat(args))
     refreshTimer.restart()
   }
 

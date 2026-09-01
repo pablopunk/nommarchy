@@ -1,3 +1,7 @@
 # Razer Nommo V2 X (1532:055E) — allow the local user to control the
 # speakers' vendor HID interface (feature report 0x07) without root.
+#
+# Reference copy. install.sh installs this exact content via a fixed literal
+# (see install_udev) rather than copying this file, so the privileged write is
+# never sourced from the user-writable checkout. Keep the two in sync.
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1532", ATTRS{idProduct}=="055e", MODE="0660", GROUP="input", TAG+="uaccess"

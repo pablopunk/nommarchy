@@ -30,20 +30,31 @@ omarchy plugin add https://github.com/pablopunk/nommarchy.git
 
 ### 2. Install the backend + udev rule
 
-The plugin drives the tiny `nommarchy` CLI, which needs to be on `PATH` and
-needs unprivileged access to the speakers' HID interface:
+The plugin drives the tiny `nommarchy` CLI, plus a udev rule that grants your
+user unprivileged access to the speakers' HID interface:
 
 ```bash
 cd ~/.config/omarchy/plugins/pablopunk.nommarchy
-sudo ./install.sh
+./install.sh
 ```
 
-That installs `nommarchy` to `/usr/local/bin` and drops a udev rule so your
-user can open the device without `sudo`.
+The installer runs as *you* (no `sudo`): it copies `nommarchy` to
+`~/.local/bin/nommarchy`, and elevates **only** the udev-rule installation
+(the rule write plus a udev reload/trigger) via `sudo`/`pkexec`.
 
 > The plugin runs unsandboxed inside the Omarchy shell (like any shell
 > plugin) and shells out to `nommarchy`. It never touches the network, never
 > records, and only writes to the speakers when you interact with it.
+
+#### Security note
+
+Only the udev rule needs root, so `install.sh` keeps the privileged step to a
+single, *fixed* file write: the rule is embedded in the script as a literal
+string (see `install_udev` in `install.sh`, mirroring `99-nommo.rules`) and
+written via `sudo tee`, followed by a standard udev reload/trigger. Nothing is
+copied out of the user-writable plugin checkout into a system location, and the
+CLI is installed user-locally — so a process running as your user cannot
+influence what gets written as root.
 
 ## Usage
 
@@ -69,7 +80,8 @@ You can also toggle it from a terminal or a keybind:
 omarchy-shell shell toggle pablopunk.nommarchy
 ```
 
-The `nommarchy` binary doubles as a command-line tool:
+The `nommarchy` binary doubles as a command-line tool (ensure `~/.local/bin`
+is on your `PATH`):
 
 ```bash
 nommarchy status                      # show all settings
@@ -110,9 +122,10 @@ the OS already controls.
 
 ```bash
 omarchy plugin remove pablopunk.nommarchy
-cd ~/.config/omarchy/plugins/pablopunk.nommarchy 2>/dev/null && sudo ./install.sh --uninstall
+cd ~/.config/omarchy/plugins/pablopunk.nommarchy 2>/dev/null && ./install.sh --uninstall
 # or by hand:
-sudo rm -f /usr/local/bin/nommarchy /etc/udev/rules.d/99-nommo.rules
+rm -f ~/.local/bin/nommarchy
+sudo rm -f /etc/udev/rules.d/99-nommo.rules
 ```
 
 ## License
